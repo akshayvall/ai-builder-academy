@@ -168,6 +168,49 @@ h1,h2,h3,h4,h5 { line-height: 1.3; }
 .lab-complete-banner { text-align: center; background: rgba(52,211,153,.1); border: 1px solid var(--success); border-radius: 16px; padding: 26px; margin-top: 20px; }
 .lab-complete-banner h3 { color: var(--success); margin-bottom: 6px; }
 
+/* ---------- Diagrams (classes consumed by diagrams.js) ---------- */
+.visual-diagram { background: var(--bg-card); border: 1px solid var(--border); border-radius: 16px; padding: 18px 20px; margin-bottom: 22px; }
+.diagram-title-bar { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
+.diagram-title-bar h3 { font-size: 16px; color: var(--ai-purple); }
+.diagram-controls { display: flex; gap: 6px; }
+.diag-btn { background: var(--bg-hover); border: 1px solid var(--border); color: var(--text-secondary); border-radius: 8px; padding: 6px 12px; font-size: 12px; cursor: pointer; }
+.diag-btn:hover { color: var(--text); border-color: var(--ai-purple); }
+.diagram-description { font-size: 13px; color: var(--text-secondary); margin-bottom: 12px; }
+.diagram-canvas { background: var(--code-bg); border: 1px solid var(--border); border-radius: 12px; padding: 10px; overflow: hidden; }
+.diagram-canvas svg { width: 100%; height: auto; max-height: 520px; display: block; }
+.diagram-step-info { display: flex; gap: 14px; align-items: baseline; margin-top: 12px; font-size: 13px; }
+.step-counter { color: var(--ai-purple); font-weight: 700; white-space: nowrap; }
+.step-text { color: var(--text-secondary); }
+.diagram-legend { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 12px; font-size: 12px; color: var(--text-secondary); }
+.legend-item { display: flex; align-items: center; gap: 6px; }
+.legend-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+/* step-through highlighting: dim everything except active steps */
+.step-highlight { transition: opacity .25s, filter .25s; }
+.diagram-canvas:not([data-step="0"]) .step-highlight:not(.active) { opacity: 0.25; }
+.step-highlight.active { opacity: 1; filter: drop-shadow(0 0 7px rgba(139, 124, 246, 0.55)); }
+/* flow dots: hidden until ▶ Animate toggles .animating */
+.flow-dot { opacity: 0; }
+.diagram-canvas.animating .flow-dot { opacity: 1; }
+.diagram-canvas.animating .curve-path { stroke-dasharray: 1200; stroke-dashoffset: 1200; animation: drawCurve 2.2s ease forwards; }
+@keyframes drawCurve { to { stroke-dashoffset: 0; } }
+.diagram-canvas.animating .graph-node { animation: nodePulse 1.6s ease infinite; transform-origin: center; transform-box: fill-box; }
+@keyframes nodePulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.07); } }
+.diagram-canvas.animating .hop-edge { stroke-dasharray: 10 6; animation: hopFlow 1s linear infinite; }
+@keyframes hopFlow { to { stroke-dashoffset: -16; } }
+.diagram-canvas.animating .timeline-dot { animation: nodePulse 1.4s ease infinite; transform-origin: center; transform-box: fill-box; }
+.diagram-canvas.animating .bar-fill { animation: barGrow 1.2s ease; transform-origin: left center; transform-box: fill-box; }
+@keyframes barGrow { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+
+/* ---------- Learn extras ---------- */
+.pitfall-list li { margin-bottom: 8px; }
+.keyterms-table { width: 100%; border-collapse: collapse; margin: 14px 0; font-size: 13.5px; }
+.keyterms-table th { text-align: left; color: var(--ai-purple); padding: 8px 12px; border-bottom: 1px solid var(--border); font-size: 12px; text-transform: uppercase; letter-spacing: .5px; }
+.keyterms-table td { padding: 8px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+.keyterms-table td:first-child { color: #fff; font-weight: 600; white-space: nowrap; }
+.checklist { list-style: none; margin: 10px 0 !important; }
+.checklist li { padding-left: 26px; position: relative; margin-bottom: 8px; }
+.checklist li::before { content: "☑"; position: absolute; left: 0; color: var(--success); }
+
 /* ---------- Toast ---------- */
 .toast { position: fixed; bottom: 24px; right: 24px; background: var(--bg-card); border: 1px solid var(--ai-purple); color: var(--text); padding: 12px 20px; border-radius: 12px; font-size: 14px; opacity: 0; transform: translateY(10px); transition: all .3s; pointer-events: none; z-index: 100; }
 .toast.show { opacity: 1; transform: none; }

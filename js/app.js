@@ -122,10 +122,12 @@ const app = {
                 </div>
                 <div class="tabs">
                     <button class="tab-btn active" id="tabbtn-learn" onclick="app.switchTab('learn')">📖 Learn</button>
+                    <button class="tab-btn" id="tabbtn-diagrams" onclick="app.switchTab('diagrams')">🎬 Diagrams</button>
                     <button class="tab-btn" id="tabbtn-lab" onclick="app.switchTab('lab')">🧪 Build Lab</button>
                     <button class="tab-btn" id="tabbtn-quiz" onclick="app.switchTab('quiz')">❓ Quiz</button>
                 </div>
                 <div class="tab-content active" id="tab-learn">${m.learn}</div>
+                <div class="tab-content" id="tab-diagrams"></div>
                 <div class="tab-content" id="tab-lab"></div>
                 <div class="tab-content" id="tab-quiz"></div>
                 <div class="module-footer">
@@ -137,13 +139,14 @@ const app = {
             </div>`;
         LabEngine.init(m.id, m.lab);
         QuizEngine.init(m.id, m.quiz);
+        DiagramEngine.render(m.diagrams);
         this.switchTab('learn');
         window.scrollTo(0, 0);
     },
 
     switchTab(tab) {
         this.currentTab = tab;
-        ['learn', 'lab', 'quiz'].forEach(t => {
+        ['learn', 'diagrams', 'lab', 'quiz'].forEach(t => {
             const btn = document.getElementById('tabbtn-' + t);
             const panel = document.getElementById('tab-' + t);
             if (btn) btn.classList.toggle('active', t === tab);

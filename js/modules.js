@@ -18,6 +18,50 @@ const MODULES = [
     difficulty: '⭐⭐ Beginner+',
     time: '~1 evening',
     concept: 'Tool discovery via protocol',
+    diagrams: [
+        { id: 'mcp-arch', type: 'pipeline', title: 'MCP architecture — discovery & routing',
+          description: 'The assistant never hardcodes tools. At startup the MCP client asks every server what it can do; at runtime it routes each tool call to the owning server.',
+          steps: [
+            'You type a request in the CLI — it goes to the assistant loop.',
+            'The assistant calls Claude with the tool list built at startup. Claude replies with tool_use blocks.',
+            'At startup, the MCP client called list_tools() on every configured server and merged the results.',
+            'Each server advertises its own tools: file ops, web fetch, or anything you write yourself.',
+            'At runtime the client routes each call to the owning server and returns the result to the model.'
+          ],
+          legend: [ { color: '#8b7cf6', label: 'Assistant side' }, { color: '#38bdf8', label: 'MCP protocol' }, { color: '#34d399', label: 'Tool servers' } ],
+          data: { viewBox: '0 0 860 420', nodes: [
+            { id: 'user', x: 30, y: 175, w: 110, h: 70, label: 'You', sub: 'CLI', icon: '🧑', color: '#8b7cf6', step: 1 },
+            { id: 'asst', x: 200, y: 160, w: 160, h: 100, label: 'Assistant loop', sub: 'Claude Sonnet\ntool_use loop', icon: '🤖', color: '#8b7cf6', step: 2 },
+            { id: 'client', x: 430, y: 160, w: 150, h: 100, label: 'MCP Client', sub: 'discovers + routes', icon: '🔌', color: '#38bdf8', step: 3 },
+            { id: 'fs', x: 670, y: 30, w: 165, h: 80, label: 'filesystem', sub: 'read/write files', color: '#34d399', step: 4 },
+            { id: 'fetch', x: 670, y: 170, w: 165, h: 80, label: 'fetch', sub: 'web requests', color: '#34d399', step: 4 },
+            { id: 'custom', x: 670, y: 310, w: 165, h: 80, label: 'your server', sub: 'FastMCP · 20 lines', color: '#34d399', step: 4 } ],
+          edges: [
+            { from: 'user', to: 'asst', step: 1, color: '#8b7cf6' },
+            { from: 'asst', to: 'client', label: 'tool_use', step: 2, color: '#8b7cf6' },
+            { from: 'client', to: 'fs', label: 'list_tools()', step: 3, color: '#38bdf8', dashed: true },
+            { from: 'client', to: 'fetch', label: 'call_tool()', step: 5, color: '#34d399' },
+            { from: 'client', to: 'custom', label: 'list_tools()', step: 3, color: '#38bdf8', dashed: true } ] } },
+        { id: 'mcp-loop', type: 'timeline', title: 'One request, end to end',
+          description: 'The exact sequence for "fetch a page and save a summary" — two tools, two different servers, one conversation.',
+          steps: [
+            'The user request enters the loop as a messages array.',
+            'Claude decides it needs the fetch tool and emits a tool_use block.',
+            'The client routes the call to the fetch server (it owns that tool).',
+            'The result comes back as a tool_result message — the model reads it.',
+            'Claude now emits a second tool_use: write the summary via the filesystem server.',
+            'With both results in context, Claude writes the final answer.',
+            'The loop exits when stop_reason is no longer "tool_use".'
+          ],
+          data: { viewBox: '0 0 860 480', events: [
+            { kind: 'request', actor: 'user', text: '"Fetch the MCP docs page, summarize, save to notes.md"', color: '#8b7cf6', step: 1 },
+            { kind: 'model_call', actor: 'agent', text: 'Claude responds with tool_use: fetch(url=…)', color: '#8b7cf6', step: 2 },
+            { kind: 'route', actor: 'mcp client', text: 'routing["fetch"] → fetch server session', color: '#38bdf8', step: 3 },
+            { kind: 'tool_result', actor: 'fetch server', text: 'page content returned to the model', color: '#34d399', step: 4 },
+            { kind: 'model_call', actor: 'agent', text: 'tool_use: write_file(path="notes.md", content=summary)', color: '#8b7cf6', step: 5 },
+            { kind: 'tool_result', actor: 'filesystem', text: 'file written — result back to the model', color: '#34d399', step: 6 },
+            { kind: 'response', actor: 'agent', text: 'stop_reason="end_turn" → final text answer to the user', color: '#fbbf24', step: 7 } ] } }
+    ],
     learn: `
       <div class="learn-section">
         <h2>The core idea</h2>
@@ -41,6 +85,37 @@ const MODULES = [
           <li>It's Anthropic's 2026 standard for connecting AI to external systems.</li>
           <li>Writing your <em>own</em> server proves you understand both sides of the protocol.</li>
         </ul>
+      </div>
+      <div class="learn-section">
+        <h2>Common pitfalls</h2>
+        <ul class="pitfall-list">
+          <li><strong>Tool-name collisions</strong> — two servers exposing a tool called <code>search</code> silently overwrite each other in a naive routing dict. Namespace as <code>server.tool</code> if you connect many servers.</li>
+          <li><strong>Swallowing tool errors</strong> — if a server throws and you crash (or return nothing), the model can't recover. Return a tool_result with <code>is_error: true</code> and let the model react.</li>
+          <li><strong>Leaky sandboxes</strong> — the filesystem server takes a root path argument. Point it at a sandbox directory, never your home folder; the model will happily explore whatever you give it.</li>
+          <li><strong>Session lifecycle bugs</strong> — stdio sessions must be opened and closed with an AsyncExitStack (or equivalent). Orphaned child processes are the classic symptom.</li>
+          <li><strong>Treating schemas as optional</strong> — a tool with a vague description and loose input schema gets misused by the model. The schema IS the prompt for tool selection.</li>
+        </ul>
+      </div>
+      <div class="learn-section">
+        <h2>Production checklist</h2>
+        <ul class="checklist">
+          <li>Startup prints every connected server and its discovered tools</li>
+          <li>Tool errors surface as is_error tool_results, never crashes</li>
+          <li>Filesystem access is sandboxed to an allowlisted directory</li>
+          <li>Adding a server requires config only — zero client-code changes</li>
+          <li>Sessions cleaned up on exit (no zombie child processes)</li>
+        </ul>
+      </div>
+      <div class="learn-section">
+        <h2>Key terms</h2>
+        <table class="keyterms-table">
+          <tr><th>Term</th><th>Meaning</th></tr>
+          <tr><td>MCP server</td><td>A process exposing tools/resources/prompts over the protocol (stdio or HTTP transport).</td></tr>
+          <tr><td>MCP client</td><td>The consumer side: connects, calls list_tools(), routes call_tool() requests.</td></tr>
+          <tr><td>tool_use block</td><td>Claude's structured request to invoke a tool — name + JSON input, answered with a tool_result.</td></tr>
+          <tr><td>stdio transport</td><td>Server runs as a child process; protocol messages flow over stdin/stdout.</td></tr>
+          <tr><td>FastMCP</td><td>Python helper that turns a decorated function into a full MCP server.</td></tr>
+        </table>
       </div>`,
     lab: {
         title: 'Build the MCP assistant',
@@ -94,6 +169,48 @@ const MODULES = [
     difficulty: '⭐⭐⭐ Intermediate',
     time: '~2 evenings',
     concept: 'Coordination over intelligence',
+    diagrams: [
+        { id: 'orch-dag', type: 'pipeline', title: 'Orchestration DAG — plan, fan out, merge',
+          description: 'The orchestrator turns a goal into a dependency graph. Independent subtasks fan out in parallel; dependent ones wait; everything merges through a QA gate.',
+          steps: [
+            'A complex goal arrives — too big for one prompt.',
+            'The orchestrator emits a machine-readable plan: subtasks with agents and depends_on.',
+            'Research and planning have no dependencies — they run IN PARALLEL.',
+            'Coding depends on both, so it waits for their results (passed as context).',
+            'QA checks the coding output against the acceptance criteria — max 1 repair pass.',
+            'The orchestrator merges everything into the final answer. Sub-agents never talked to each other.'
+          ],
+          legend: [ { color: '#8b7cf6', label: 'Sonnet (judgment)' }, { color: '#38bdf8', label: 'Haiku (cheap)' }, { color: '#34d399', label: 'Merge' } ],
+          data: { viewBox: '0 0 860 470', nodes: [
+            { id: 'goal', x: 20, y: 190, w: 110, h: 70, label: 'Goal', icon: '🎯', color: '#fbbf24', step: 1 },
+            { id: 'orch', x: 180, y: 180, w: 150, h: 90, label: 'Orchestrator', sub: 'plan as JSON', icon: '🎭', color: '#8b7cf6', step: 2 },
+            { id: 'research', x: 420, y: 20, w: 150, h: 80, label: 'Research', sub: 'Haiku · parallel', color: '#38bdf8', step: 3 },
+            { id: 'plan', x: 420, y: 130, w: 150, h: 80, label: 'Planning', sub: 'Sonnet · parallel', color: '#8b7cf6', step: 3 },
+            { id: 'code', x: 420, y: 240, w: 150, h: 80, label: 'Coding', sub: 'Sonnet · waits', color: '#8b7cf6', step: 4 },
+            { id: 'qa', x: 420, y: 350, w: 150, h: 80, label: 'QA gate', sub: 'Haiku · ≤1 repair', color: '#38bdf8', step: 5 },
+            { id: 'merge', x: 680, y: 180, w: 150, h: 90, label: 'Merge', sub: 'final answer', icon: '✅', color: '#34d399', step: 6 } ],
+          edges: [
+            { from: 'goal', to: 'orch', step: 1, color: '#fbbf24' },
+            { from: 'orch', to: 'research', step: 3, color: '#38bdf8' },
+            { from: 'orch', to: 'plan', step: 3, color: '#8b7cf6' },
+            { from: 'orch', to: 'code', label: 'after deps', step: 4, color: '#8b7cf6', dashed: true },
+            { from: 'orch', to: 'qa', step: 5, color: '#38bdf8', dashed: true },
+            { from: 'research', to: 'merge', step: 6, color: '#34d399' },
+            { from: 'code', to: 'merge', step: 6, color: '#34d399' } ] } },
+        { id: 'orch-cost', type: 'bars', title: 'Model routing — cost per sub-agent per run',
+          description: 'Route each role to the cheapest model that can do the job. Haiku handles research and QA; Sonnet is reserved for judgment-heavy planning and coding.',
+          steps: [
+            'Research is read-and-summarize — Haiku-class work at a fraction of the cost.',
+            'Planning needs judgment about tradeoffs — Sonnet earns its price here.',
+            'Coding is the most expensive call: longest output, needs correctness.',
+            'QA is a checklist comparison — cheap Haiku again. Total run: ~$0.26 instead of ~$0.60 all-Sonnet.'
+          ],
+          data: { viewBox: '0 0 860 300', bars: [
+            { label: 'Research · Haiku', value: 0.08, display: '$0.02', color: '#38bdf8', step: 1 },
+            { label: 'Planning · Sonnet', value: 0.35, display: '$0.09', color: '#8b7cf6', step: 2 },
+            { label: 'Coding · Sonnet', value: 0.54, display: '$0.14', color: '#8b7cf6', step: 3 },
+            { label: 'QA · Haiku', value: 0.04, display: '$0.01', color: '#38bdf8', step: 4 } ] } }
+    ],
     learn: `
       <div class="learn-section">
         <h2>The core idea</h2>
@@ -119,6 +236,37 @@ const MODULES = [
           <li><strong>Independent subtasks run in parallel</strong>; dependent ones wait on <code>depends_on</code>.</li>
           <li><strong>Model routing</strong> — cheapest model that can do the sub-job.</li>
         </ol>
+      </div>
+      <div class="learn-section">
+        <h2>Common pitfalls</h2>
+        <ul class="pitfall-list">
+          <li><strong>Infinite repair loops</strong> — QA fails a criterion, the fix fails QA again, forever. Cap retries at 1–2 and surface the failure instead.</li>
+          <li><strong>Chatty sub-agents</strong> — letting agents message each other creates emergent, undebuggable behavior. All communication goes through the orchestrator.</li>
+          <li><strong>Serial execution</strong> — running the whole plan sequentially when half of it is independent. If your timeline shows no overlap, you built a pipeline, not an orchestrator.</li>
+          <li><strong>Context starvation</strong> — a stateless agent that isn't given its dependencies' outputs will hallucinate them. depends_on must map to actual context passing.</li>
+          <li><strong>Over-decomposition</strong> — 12 subtasks for a 2-step goal burns tokens and adds failure points. 3–6 subtasks is the sweet spot.</li>
+        </ul>
+      </div>
+      <div class="learn-section">
+        <h2>Production checklist</h2>
+        <ul class="checklist">
+          <li>Plan is validated JSON (pydantic) before execution starts</li>
+          <li>Independent subtasks provably overlap (log timestamps)</li>
+          <li>Repair loop is bounded; unresolved failures are reported, not hidden</li>
+          <li>Per-agent token cost tracked per run</li>
+          <li>A failed sub-agent degrades the answer, never crashes the run</li>
+        </ul>
+      </div>
+      <div class="learn-section">
+        <h2>Key terms</h2>
+        <table class="keyterms-table">
+          <tr><th>Term</th><th>Meaning</th></tr>
+          <tr><td>Orchestrator</td><td>The coordinator that decomposes, routes, schedules, and merges — it owns all control flow.</td></tr>
+          <tr><td>Sub-agent</td><td>A stateless specialist: persona + model + task in, structured result out.</td></tr>
+          <tr><td>DAG</td><td>Directed acyclic graph — the shape of a plan with dependencies; what allows safe parallelism.</td></tr>
+          <tr><td>QA gate</td><td>A checker agent that verifies output against acceptance criteria before anything ships.</td></tr>
+          <tr><td>Model routing</td><td>Matching each role to the cheapest capable model tier (Haiku vs Sonnet vs Opus).</td></tr>
+        </table>
       </div>`,
     lab: {
         title: 'Build the orchestrator',
@@ -169,6 +317,45 @@ const MODULES = [
     difficulty: '⭐⭐⭐ Intermediate',
     time: '~2 evenings',
     concept: 'Prompts are code; code has tests',
+    diagrams: [
+        { id: 'eval-flow', type: 'pipeline', title: 'The eval pipeline — dataset to regression gate',
+          description: 'Every prompt/model change flows through the same machine: run the cases, grade the outputs, compare to baseline, and fail loudly on regression.',
+          steps: [
+            'A versioned JSONL dataset: easy canaries, hard cases, adversarial traps.',
+            'The runner replays every case against the system under test.',
+            'Deterministic graders (contains/regex) check what string-matching can check — free and instant.',
+            'An LLM judge (pinned Haiku, rubric, JSON output) scores what string-matching cannot.',
+            'Scores aggregate into a scorecard: accuracy, relevance, consistency, per-tag, cost.',
+            'The compare step exits non-zero if any metric drops past threshold — the gate that makes it a pipeline.'
+          ],
+          legend: [ { color: '#38bdf8', label: 'Deterministic' }, { color: '#8b7cf6', label: 'LLM-judged' }, { color: '#f87171', label: 'Gate' } ],
+          data: { viewBox: '0 0 860 460', nodes: [
+            { id: 'ds', x: 20, y: 180, w: 130, h: 90, label: 'eval_cases', sub: '.jsonl · 20-30\ncases, tagged', icon: '📄', color: '#fbbf24', step: 1 },
+            { id: 'run', x: 200, y: 180, w: 130, h: 90, label: 'Runner', sub: 'N=3 for\nconsistency', icon: '⚙️', color: '#8b7cf6', step: 2 },
+            { id: 'det', x: 390, y: 60, w: 150, h: 80, label: 'Deterministic', sub: 'contains · regex', color: '#38bdf8', step: 3 },
+            { id: 'judge', x: 390, y: 300, w: 150, h: 80, label: 'LLM judge', sub: 'Haiku · rubric · t=0', color: '#8b7cf6', step: 4 },
+            { id: 'score', x: 610, y: 180, w: 130, h: 90, label: 'Scorecard', sub: 'per-tag + cost', icon: '📊', color: '#34d399', step: 5 },
+            { id: 'gate', x: 610, y: 350, w: 130, h: 80, label: 'Gate', sub: 'exit 1 on regress', icon: '🚦', color: '#f87171', step: 6 } ],
+          edges: [
+            { from: 'ds', to: 'run', step: 2, color: '#fbbf24' },
+            { from: 'run', to: 'det', step: 3, color: '#38bdf8' },
+            { from: 'run', to: 'judge', step: 4, color: '#8b7cf6' },
+            { from: 'det', to: 'score', step: 5, color: '#38bdf8' },
+            { from: 'judge', to: 'score', step: 5, color: '#8b7cf6' },
+            { from: 'score', to: 'gate', label: 'vs baseline', step: 6, color: '#f87171' } ] } },
+        { id: 'eval-scorecard', type: 'bars', title: 'Baseline vs after-change — a caught regression',
+          description: 'A "harmless" prompt tweak ("be creative") tanked consistency and accuracy. The gate catches it; vibes would not have.',
+          steps: [
+            'Accuracy drops 8 points — the reworded prompt lost factual grounding.',
+            'Relevance barely moves — this is why you track multiple metrics.',
+            'Consistency collapses: the same input now gives different answers run to run.',
+            'Two of three metrics breached the -3pt threshold → compare exits non-zero → change blocked.'
+          ],
+          data: { viewBox: '0 0 860 320', series: ['Baseline', 'After change'], bars: [
+            { label: 'Accuracy', value: 0.924, display: '92.4', color: '#8b7cf6', value2: 0.841, display2: '84.1 ▼', color2: '#f87171', step: 1 },
+            { label: 'Relevance', value: 0.887, display: '88.7', color: '#8b7cf6', value2: 0.889, display2: '88.9', color2: '#38bdf8', step: 2 },
+            { label: 'Consistency', value: 0.901, display: '90.1', color: '#8b7cf6', value2: 0.763, display2: '76.3 ▼', color2: '#f87171', step: 3 } ] } }
+    ],
     learn: `
       <div class="learn-section">
         <h2>The core idea</h2>
@@ -192,6 +379,37 @@ const MODULES = [
           <li><strong>Consistency</strong> — run N times; do you get the same answer? Flaky cases are a prompt smell.</li>
         </ul>
         <div class="concept-box">The non-zero exit code on regression is what turns a script into a <em>pipeline</em> you can gate changes on.</div>
+      </div>
+      <div class="learn-section">
+        <h2>Common pitfalls</h2>
+        <ul class="pitfall-list">
+          <li><strong>A dataset that never fails</strong> — if a sabotaged prompt passes, your cases are too easy. An eval set earns trust by catching planted regressions.</li>
+          <li><strong>Unpinned judge</strong> — if the judge model or rubric drifts, score changes are meaningless. Pin the model ID, version the rubric, keep temperature at 0.</li>
+          <li><strong>Judging what regex could check</strong> — LLM judges cost money and add noise. Exact/contains/regex first; judge only the fuzzy remainder.</li>
+          <li><strong>Single-run scores</strong> — one run per case hides flakiness. Consistency (N=3 agreement) is its own signal, not an optional extra.</li>
+          <li><strong>No config hash</strong> — a scorecard you can't tie back to an exact prompt+model+params combination can't be compared to anything.</li>
+        </ul>
+      </div>
+      <div class="learn-section">
+        <h2>Production checklist</h2>
+        <ul class="checklist">
+          <li>≥20 cases across ≥3 tags, mixed deterministic + judged + adversarial</li>
+          <li>Judge pinned, rubric in version control, ≥10 scores hand-verified</li>
+          <li>Every run saved with config hash, per-tag breakdown, and cost</li>
+          <li>Compare command exits non-zero past threshold — wired before prompt changes ship</li>
+          <li>A planted bad change is demonstrably caught; a neutral change passes</li>
+        </ul>
+      </div>
+      <div class="learn-section">
+        <h2>Key terms</h2>
+        <table class="keyterms-table">
+          <tr><th>Term</th><th>Meaning</th></tr>
+          <tr><td>Eval case</td><td>One test: input + expectation + grader type + tags. The unit of your dataset.</td></tr>
+          <tr><td>LLM-as-judge</td><td>A model scoring another model's output against a rubric, returning structured JSON.</td></tr>
+          <tr><td>Regression canary</td><td>An easy case that should always pass — if it fails, something fundamental broke.</td></tr>
+          <tr><td>Consistency</td><td>Agreement across N repeated runs of the same case; low = flaky prompt.</td></tr>
+          <tr><td>Position bias</td><td>A judge favouring answer A or B by position — killed by shuffling order per case.</td></tr>
+        </table>
       </div>`,
     lab: {
         title: 'Build the eval pipeline',
@@ -241,6 +459,45 @@ const MODULES = [
     difficulty: '⭐⭐⭐⭐ Advanced',
     time: '~2–3 evenings',
     concept: 'Retrieved documents are untrusted input',
+    diagrams: [
+        { id: 'rag-defense', type: 'layers', title: 'Defense in depth — five layers, three of them guardrails',
+          description: 'Plain RAG is layers 2 and 4. The build is layers 1, 3, and 5 — each one blocks a different attack class.',
+          steps: [
+            'Layer 1 rejects oversized queries and classifies injection attempts with a cheap Haiku call — before any retrieval happens.',
+            'Layer 2 is standard retrieval: embed the query, pull top-k chunks from the vector DB.',
+            'Layer 3 wraps every chunk in <doc id> tags with a non-negotiable rule: document content is DATA, never instructions.',
+            'Layer 4 generates with citations required — every claim must reference [docN].',
+            'Layer 5 verifies before the user sees anything: citations exist, claims are grounded, refusals are honest.'
+          ],
+          legend: [ { color: '#38bdf8', label: 'Input side' }, { color: '#fbbf24', label: 'Firewall' }, { color: '#34d399', label: 'Output side' } ],
+          data: { viewBox: '0 0 860 420', layers: [
+            { label: '1 · Input validation', sub: 'length caps + Haiku injection classifier', color: '#38bdf8', tag: 'BLOCKS: direct injection', step: 1 },
+            { label: '2 · Retrieval', sub: 'embed → top-k from ChromaDB', color: '#8b7cf6', step: 2 },
+            { label: '3 · Context firewall', sub: '&lt;doc&gt; tags · "data, never instructions"', color: '#fbbf24', tag: 'BLOCKS: poisoned docs', step: 3 },
+            { label: '4 · Generation', sub: 'answer ONLY from docs · cite [docN] per claim', color: '#8b7cf6', step: 4 },
+            { label: '5 · Output sanitization', sub: 'citation check + groundedness judge', color: '#34d399', tag: 'BLOCKS: hallucination', step: 5 } ] } },
+        { id: 'rag-attack', type: 'pipeline', title: 'Anatomy of a blocked injection',
+          description: 'An attacker plants "IGNORE ALL PREVIOUS INSTRUCTIONS" inside a corpus document. Watch where each defense engages.',
+          steps: [
+            'The poisoned document sits in the corpus looking like any other file.',
+            'A normal user query retrieves it — similarity search does not care about intent.',
+            'The firewall wraps it in <doc> tags; the system prompt says content inside is data.',
+            'The model answers from the legitimate docs, cites them, and NOTES the injection attempt instead of obeying it.',
+            'Sanitization double-checks: citations valid, no uncited claims — the answer ships with the attack neutralized.'
+          ],
+          legend: [ { color: '#f87171', label: 'Attack path' }, { color: '#fbbf24', label: 'Firewall' }, { color: '#34d399', label: 'Safe output' } ],
+          data: { viewBox: '0 0 860 420', nodes: [
+            { id: 'poison', x: 20, y: 40, w: 160, h: 80, label: 'Poisoned doc', sub: '"IGNORE ALL…"', icon: '☠️', color: '#f87171', step: 1 },
+            { id: 'query', x: 20, y: 290, w: 160, h: 80, label: 'User query', sub: 'legitimate question', icon: '🧑', color: '#38bdf8', step: 2 },
+            { id: 'retr', x: 260, y: 165, w: 150, h: 90, label: 'Retriever', sub: 'top-k · intent-blind', color: '#8b7cf6', step: 2 },
+            { id: 'fw', x: 490, y: 165, w: 150, h: 90, label: 'Firewall', sub: '&lt;doc&gt; tags +\nsecurity rules', icon: '🛡️', color: '#fbbf24', step: 3 },
+            { id: 'model', x: 710, y: 165, w: 130, h: 90, label: 'Model', sub: 'cites [docN]\nnotes the attack', color: '#34d399', step: 4 } ],
+          edges: [
+            { from: 'poison', to: 'retr', label: 'retrieved anyway', color: '#f87171', dashed: true, step: 2 },
+            { from: 'query', to: 'retr', color: '#38bdf8', step: 2 },
+            { from: 'retr', to: 'fw', step: 3, color: '#fbbf24' },
+            { from: 'fw', to: 'model', label: 'data, not commands', step: 4, color: '#34d399' } ] } }
+    ],
     learn: `
       <div class="learn-section">
         <h2>The core idea</h2>
@@ -261,6 +518,37 @@ Answer <─[5 Output sanitization]<─[4 Generation, cite-required]◄┘</pre><
           <li><strong>Context firewall</strong> — wrap documents in tags, tell the model they are data never instructions, require citations.</li>
           <li><strong>Output sanitization</strong> — verify every claim cites a real document; refuse rather than hallucinate.</li>
         </ul>
+      </div>
+      <div class="learn-section">
+        <h2>Common pitfalls</h2>
+        <ul class="pitfall-list">
+          <li><strong>Trusting the corpus</strong> — "it's our own documents" is how injection ships to production. User uploads, scraped pages, and old wikis all carry hostile text eventually.</li>
+          <li><strong>Guardrails without attacks</strong> — adding defenses you never tested is security theater. The Phase-2 attack suite is what makes the guardrails real.</li>
+          <li><strong>Refusing to refuse</strong> — a RAG system that always answers will hallucinate on out-of-corpus questions. "I don't have that information" is a feature.</li>
+          <li><strong>Sanitizing silently</strong> — dropping a failed check without logging hides both attacks and bugs. Every block needs a recorded reason.</li>
+          <li><strong>One giant chunk</strong> — oversized chunks blur retrieval and dilute citations. ~500 tokens with overlap keeps both sharp.</li>
+        </ul>
+      </div>
+      <div class="learn-section">
+        <h2>Production checklist</h2>
+        <ul class="checklist">
+          <li>Attack suite (≥3 attack classes) re-run after every guardrail change</li>
+          <li>Injection classifier on input; length caps enforced</li>
+          <li>Docs demarcated in tags; system prompt forbids in-context instructions</li>
+          <li>Citations mechanically verified against retrieved chunk ids</li>
+          <li>Out-of-corpus → honest refusal; every block logged with a reason</li>
+        </ul>
+      </div>
+      <div class="learn-section">
+        <h2>Key terms</h2>
+        <table class="keyterms-table">
+          <tr><th>Term</th><th>Meaning</th></tr>
+          <tr><td>Prompt injection</td><td>Text (in query or documents) crafted to override the model's instructions.</td></tr>
+          <tr><td>Indirect injection</td><td>Injection delivered through retrieved content rather than the user's message — RAG's signature threat.</td></tr>
+          <tr><td>Context firewall</td><td>Demarcating untrusted content + explicit rules that it is data, never instructions.</td></tr>
+          <tr><td>Groundedness</td><td>Whether every claim in the answer is supported by the retrieved documents.</td></tr>
+          <tr><td>Defense in depth</td><td>Multiple independent layers so one bypass doesn't compromise the system.</td></tr>
+        </table>
       </div>`,
     lab: {
         title: 'Build RAG with guardrails',
@@ -312,6 +600,45 @@ Answer <─[5 Output sanitization]<─[4 Generation, cite-required]◄┘</pre><
     difficulty: '⭐⭐ Beginner+',
     time: '~1–2 evenings',
     concept: 'Observability is a first-class feature',
+    diagrams: [
+        { id: 'audit-trace', type: 'timeline', title: 'One trace, reconstructed — every event category',
+          description: 'A complete run of "summarize Q1 sales data": tools used, data accessed, the decision made, and why. This is what audit.py show prints.',
+          steps: [
+            'Every trace starts with the raw user request — the anchor for everything after.',
+            'Each model call logs stop_reason and token usage — cost is traceable per turn.',
+            'A tool_call event captures the exact input the agent sent.',
+            'data_access records what came back — summarized + hashed, never dumped raw.',
+            'The decision event is the "why": action, alternatives rejected, reasoning. Read these first during an incident.',
+            'The final response closes the trace. Gap-free from request to response.'
+          ],
+          legend: [ { color: '#8b7cf6', label: 'Agent' }, { color: '#34d399', label: 'Tools/data' }, { color: '#fbbf24', label: 'Decision' } ],
+          data: { viewBox: '0 0 860 480', events: [
+            { kind: 'request', actor: 'user', text: '"Summarize Q1 sales data"', color: '#8b7cf6', step: 1 },
+            { kind: 'model_call', actor: 'agent', text: 'stop_reason=tool_use · in:842 out:120 tokens', color: '#8b7cf6', step: 2 },
+            { kind: 'tool_call', actor: 'read_file', text: 'input: {"path": "data/q1_sales.csv"}', color: '#34d399', step: 3 },
+            { kind: 'data_access', actor: 'read_file', text: '4,812 rows · sha256:a1b2… · summary logged, blob stored', color: '#34d399', step: 4 },
+            { kind: 'decision', actor: 'agent', text: 'aggregate by region (rejected: by product — user asked regional)', color: '#fbbf24', step: 5 },
+            { kind: 'response', actor: 'agent', text: 'final summary returned · trace complete', color: '#8b7cf6', step: 6 } ] } },
+        { id: 'audit-arch', type: 'pipeline', title: 'Instrumentation architecture — loop to reader',
+          description: 'The agent loop emits events; the logger appends them; the reader makes them legible. Logs nobody reads are theater.',
+          steps: [
+            'The agent loop is wrapped so every meaningful step emits an AuditEvent.',
+            'The logger appends JSONL — append-only, secrets redacted at write time.',
+            'Large payloads go to content-addressed blobs; the log keeps the hash.',
+            'The reader CLI turns raw events into timelines: list, show, grep. This is the tool you actually use.'
+          ],
+          data: { viewBox: '0 0 860 420', nodes: [
+            { id: 'loop', x: 30, y: 160, w: 160, h: 100, label: 'Agent loop', sub: 'wrapped calls', icon: '🤖', color: '#8b7cf6', step: 1 },
+            { id: 'logger', x: 280, y: 160, w: 160, h: 100, label: 'AuditLogger', sub: 'append-only\nredacts secrets', icon: '📋', color: '#fbbf24', step: 2 },
+            { id: 'jsonl', x: 540, y: 40, w: 150, h: 80, label: 'audit.jsonl', sub: 'one line per event', color: '#34d399', step: 2 },
+            { id: 'blobs', x: 540, y: 170, w: 150, h: 80, label: 'blobs/&lt;hash&gt;', sub: 'large payloads', color: '#34d399', step: 3 },
+            { id: 'reader', x: 540, y: 300, w: 150, h: 80, label: 'audit.py', sub: 'list · show · grep', icon: '🔍', color: '#38bdf8', step: 4 } ],
+          edges: [
+            { from: 'loop', to: 'logger', label: 'AuditEvent', step: 2, color: '#8b7cf6' },
+            { from: 'logger', to: 'jsonl', step: 2, color: '#34d399' },
+            { from: 'logger', to: 'blobs', label: 'sha256', step: 3, color: '#34d399', dashed: true },
+            { from: 'logger', to: 'reader', step: 4, color: '#38bdf8', dashed: true } ] } }
+    ],
     learn: `
       <div class="learn-section">
         <h2>The core idea</h2>
@@ -334,6 +661,37 @@ Answer <─[5 Output sanitization]<─[4 Generation, cite-required]◄┘</pre><
                   ▼
              audit.py show &lt;trace_id&gt;  ← human-readable timeline</pre></div>
         <div class="concept-box">An audit log you can edit isn't an audit log. Append-only, hash large payloads, never log secrets.</div>
+      </div>
+      <div class="learn-section">
+        <h2>Common pitfalls</h2>
+        <ul class="pitfall-list">
+          <li><strong>Logging everything raw</strong> — dumping full documents and tool outputs makes the log unreadable and risks leaking sensitive data. Summarize + hash.</li>
+          <li><strong>Logging nothing on error</strong> — the runs you most need to reconstruct are the ones that crashed. Error paths must emit events too.</li>
+          <li><strong>No "why"</strong> — a log of actions without decisions reads like a robot diary. The decision events with reasoning are the incident-response gold.</li>
+          <li><strong>Secrets in payloads</strong> — API keys and tokens sneak in via tool inputs. Redact at write time, not at read time.</li>
+          <li><strong>Write-only logs</strong> — if there's no reader that makes traces legible, nobody will ever look, and quality silently rots.</li>
+        </ul>
+      </div>
+      <div class="learn-section">
+        <h2>Production checklist</h2>
+        <ul class="checklist">
+          <li>One gap-free trace per run: request → response, errors included</li>
+          <li>All four categories present: tools, data, decisions, reasoning</li>
+          <li>Append-only JSONL; blobs content-addressed; secrets redacted</li>
+          <li>Reader CLI: list, show, grep — legible to a non-author</li>
+          <li>Reconstruction test passed by someone who didn't watch the run</li>
+        </ul>
+      </div>
+      <div class="learn-section">
+        <h2>Key terms</h2>
+        <table class="keyterms-table">
+          <tr><th>Term</th><th>Meaning</th></tr>
+          <tr><td>Trace</td><td>All events for one run, tied together by a trace_id.</td></tr>
+          <tr><td>Span</td><td>One unit of work within a trace; parent_span links nested work (sub-agents!).</td></tr>
+          <tr><td>Append-only</td><td>Events are only ever added, never modified — the property that makes it an audit log.</td></tr>
+          <tr><td>Content addressing</td><td>Storing a blob under its own hash — the log references it verifiably without containing it.</td></tr>
+          <tr><td>OpenTelemetry</td><td>The industry-standard span/trace format this schema maps onto (the stretch goal).</td></tr>
+        </table>
       </div>`,
     lab: {
         title: 'Instrument an agent with audit logs',
@@ -381,6 +739,35 @@ Answer <─[5 Output sanitization]<─[4 Generation, cite-required]◄┘</pre><
     difficulty: '⭐⭐⭐⭐ Advanced',
     time: '~2–3 evenings',
     concept: 'How AI actually learns',
+    diagrams: [
+        { id: 'ft-loss', type: 'curves', title: 'Reading the loss curve — the fine-tuner\'s vital sign',
+          description: 'Three training runs, three diagnoses. The shape of the loss curve tells you what is happening before any eval does.',
+          steps: [
+            'HEALTHY: smooth decline that flattens — the model is generalizing from your data.',
+            'MEMORIZING: loss collapses to ~0 — too many epochs or too little data; it will parrot training examples and fail held-out cases.',
+            'BROKEN: loss never falls — wrong learning rate, wrong chat template, or malformed data. Fix the input, don\'t tune knobs blindly.'
+          ],
+          legend: [ { color: '#34d399', label: 'Healthy' }, { color: '#fbbf24', label: 'Memorizing' }, { color: '#f87171', label: 'Broken' } ],
+          data: { viewBox: '0 0 860 420', xLabel: 'training steps →', yLabel: 'loss',
+            curves: [
+              { label: 'healthy', color: '#34d399', step: 1, points: [[0,0.95],[0.15,0.68],[0.3,0.5],[0.5,0.38],[0.7,0.31],[0.95,0.28]] },
+              { label: 'memorizing', color: '#fbbf24', step: 2, points: [[0,0.95],[0.1,0.5],[0.2,0.16],[0.35,0.05],[0.5,0.02],[0.95,0.01]] },
+              { label: 'broken', color: '#f87171', step: 3, points: [[0,0.9],[0.2,0.88],[0.5,0.9],[0.75,0.87],[0.95,0.88]] } ] } },
+        { id: 'ft-lora', type: 'layers', title: 'What LoRA actually changes',
+          description: 'The base model is frozen. A small adapter learns your task. That asymmetry is why this runs on a free Colab T4.',
+          steps: [
+            'The base model — billions of parameters — stays completely frozen. Its general knowledge is untouched.',
+            'LoRA injects small low-rank matrices (~1% of params) into attention/MLP layers — only these train.',
+            'Your 300 curated examples flow through; gradients update only the adapter.',
+            'Export: merge or keep the adapter separate, quantize to GGUF, serve with Ollama.'
+          ],
+          legend: [ { color: '#38bdf8', label: 'Frozen' }, { color: '#8b7cf6', label: 'Trainable' }, { color: '#34d399', label: 'Output' } ],
+          data: { viewBox: '0 0 860 400', layers: [
+            { label: 'Base model — Llama 3.2 3B', sub: 'all weights frozen · general capability preserved', color: '#38bdf8', tag: '❄ FROZEN', step: 1 },
+            { label: 'LoRA adapter — r=16', sub: 'low-rank matrices in q/k/v/o + MLP projections', color: '#8b7cf6', tag: '🔥 ~1% TRAINABLE', step: 2 },
+            { label: 'Your dataset', sub: '300 hand-reviewed chat examples · held-out test split', color: '#fbbf24', tag: 'THE REAL WORK', step: 3 },
+            { label: 'Tuned model', sub: 'adapter (~200 MB) → GGUF q4_k_m → Ollama', color: '#34d399', tag: 'SHIP IT', step: 4 } ] } }
+    ],
     learn: `
       <div class="learn-section">
         <h2>The core idea</h2>
@@ -400,6 +787,37 @@ Answer <─[5 Output sanitization]<─[4 Generation, cite-required]◄┘</pre><
       <div class="learn-section">
         <h2>What LoRA changes</h2>
         <p>LoRA freezes the base model's weights and trains a small adapter (~1% of parameters). You get most of the benefit of full fine-tuning at a fraction of the memory — small enough to run on a single consumer GPU or a free Colab T4.</p>
+      </div>
+      <div class="learn-section">
+        <h2>Common pitfalls</h2>
+        <ul class="pitfall-list">
+          <li><strong>Scaling data before cleaning it</strong> — 3000 scraped examples with inconsistent formats teach inconsistency. 300 hand-reviewed examples teach the task.</li>
+          <li><strong>Training on your test set</strong> — if the held-out split leaks into training, your "improvement" is fiction. Split first, never touch it.</li>
+          <li><strong>Chat-template mismatch</strong> — training data formatted differently from inference-time prompts is the #1 silent failure. Same template everywhere.</li>
+          <li><strong>Chasing loss instead of evals</strong> — a lower loss on training data means nothing; the base-vs-tuned comparison on held-out cases is the truth.</li>
+          <li><strong>Ignoring catastrophic forgetting</strong> — a model that nails your task but can no longer hold a conversation may be worse in practice. Out-of-domain checks catch it.</li>
+        </ul>
+      </div>
+      <div class="learn-section">
+        <h2>Production checklist</h2>
+        <ul class="checklist">
+          <li>CUDA verified (or Colab fallback) before any training run</li>
+          <li>200+ hand-reviewed examples; 10–15% held out, never trained on</li>
+          <li>Loss curve healthy — explained, not just observed</li>
+          <li>Measured win-rate over base on held-out set (blind, order-shuffled judging)</li>
+          <li>Out-of-domain sanity check done; degradation reported honestly</li>
+        </ul>
+      </div>
+      <div class="learn-section">
+        <h2>Key terms</h2>
+        <table class="keyterms-table">
+          <tr><th>Term</th><th>Meaning</th></tr>
+          <tr><td>LoRA / QLoRA</td><td>Low-rank adapters on a frozen base; the Q adds 4-bit quantization so it fits small GPUs.</td></tr>
+          <tr><td>SFT</td><td>Supervised fine-tuning — learning from input→output example pairs.</td></tr>
+          <tr><td>Epoch</td><td>One full pass over the training data; more isn't better past the memorization point.</td></tr>
+          <tr><td>Catastrophic forgetting</td><td>Losing general capability while specializing — detected via out-of-domain prompts.</td></tr>
+          <tr><td>GGUF</td><td>Quantized single-file model format that llama.cpp/Ollama serve locally.</td></tr>
+        </table>
       </div>`,
     lab: {
         title: 'Fine-tune and evaluate a small model',
@@ -450,6 +868,54 @@ Answer <─[5 Output sanitization]<─[4 Generation, cite-required]◄┘</pre><
     difficulty: '⭐⭐⭐⭐ Advanced',
     time: '~2–3 evenings',
     concept: 'Relationships over similarity',
+    diagrams: [
+        { id: 'kg-hop', type: 'graph', title: 'Multi-hop traversal — the question vector search can\'t answer',
+          description: '"Which technologies are shared by projects Akshay works on?" No single document says it. The graph walks it in two hops.',
+          steps: [
+            'The graph was built by LLM extraction: typed entities, MERGE-deduped across all documents.',
+            'HOP 1 — from the Person node, follow WORKS_ON edges to find both projects.',
+            'HOP 2 — from each project, follow USES edges to collect technologies.',
+            'INTERSECT — Python appears on both paths. That is the answer, with the path as the receipt.'
+          ],
+          legend: [ { color: '#8b7cf6', label: 'Person' }, { color: '#38bdf8', label: 'Project' }, { color: '#34d399', label: 'Technology' }, { color: '#fbbf24', label: 'Traversal path' } ],
+          data: { viewBox: '0 0 860 440', nodes: [
+            { id: 'ak', x: 140, y: 220, label: 'Akshay', type: 'Person', color: '#8b7cf6', step: 2 },
+            { id: 'pa', x: 380, y: 110, label: 'Builder Site', type: 'Project', color: '#38bdf8', step: 2 },
+            { id: 'pb', x: 380, y: 330, label: 'RAG Bot', type: 'Project', color: '#38bdf8', step: 2 },
+            { id: 'py', x: 620, y: 220, label: 'Python', type: 'Technology', color: '#34d399', step: 4 },
+            { id: 'neo', x: 620, y: 80, label: 'Neo4j', type: 'Technology', color: '#34d399', step: 3 },
+            { id: 'ch', x: 620, y: 360, label: 'Chroma', type: 'Technology', color: '#34d399', step: 3 } ],
+          links: [
+            { from: 'ak', to: 'pa', label: 'WORKS_ON', hop: true, step: 2 },
+            { from: 'ak', to: 'pb', label: 'WORKS_ON', hop: true, step: 2 },
+            { from: 'pa', to: 'py', label: 'USES', hop: true, step: 3 },
+            { from: 'pa', to: 'neo', label: 'USES', step: 3 },
+            { from: 'pb', to: 'py', label: 'USES', hop: true, step: 3 },
+            { from: 'pb', to: 'ch', label: 'USES', step: 3 } ] } },
+        { id: 'kg-pipeline', type: 'pipeline', title: 'From documents to grounded graph answers',
+          description: 'Two flows share one graph: ingestion (top) builds it idempotently; querying (bottom) translates questions to Cypher behind a read-only guardrail.',
+          steps: [
+            'Documents go through schema-constrained LLM extraction — only allowed node and relation types come out.',
+            'Triples load with MERGE, never CREATE: re-ingestion is idempotent, entities dedupe across documents.',
+            'A question is translated to Cypher with the schema in the prompt.',
+            'The guardrail rejects anything that isn\'t read-only MATCH/RETURN — the Build-4 habit applied to databases.',
+            'The answer is generated ONLY from query results, naming the relationship path it used.'
+          ],
+          legend: [ { color: '#fbbf24', label: 'Ingestion' }, { color: '#38bdf8', label: 'Query' }, { color: '#34d399', label: 'Grounded answer' } ],
+          data: { viewBox: '0 0 860 460', nodes: [
+            { id: 'docs', x: 20, y: 60, w: 140, h: 80, label: 'Documents', sub: '15-30 files', icon: '📄', color: '#fbbf24', step: 1 },
+            { id: 'ext', x: 230, y: 60, w: 150, h: 80, label: 'LLM extraction', sub: 'schema-constrained', color: '#fbbf24', step: 1 },
+            { id: 'neo4j', x: 460, y: 170, w: 150, h: 100, label: 'Neo4j', sub: 'typed graph\nMERGE-deduped', icon: '🕸️', color: '#8b7cf6', step: 2 },
+            { id: 'q', x: 20, y: 330, w: 140, h: 80, label: 'Question', icon: '❓', color: '#38bdf8', step: 3 },
+            { id: 't2c', x: 230, y: 330, w: 150, h: 80, label: 'Text → Cypher', sub: 'read-only guard', color: '#38bdf8', step: 4 },
+            { id: 'ans', x: 690, y: 180, w: 150, h: 80, label: 'Answer', sub: 'grounded + path', icon: '✅', color: '#34d399', step: 5 } ],
+          edges: [
+            { from: 'docs', to: 'ext', step: 1, color: '#fbbf24' },
+            { from: 'ext', to: 'neo4j', label: 'MERGE triples', step: 2, color: '#fbbf24' },
+            { from: 'q', to: 't2c', step: 3, color: '#38bdf8' },
+            { from: 't2c', to: 'neo4j', label: 'MATCH … RETURN', step: 4, color: '#38bdf8' },
+            { from: 'neo4j', to: 'ans', label: 'subgraph', step: 5, color: '#34d399' } ] } }
+    ],
     learn: `
       <div class="learn-section">
         <h2>The core idea</h2>
@@ -468,6 +934,37 @@ Question ─>[2 Text→Cypher]─> query ─> subgraph ─>[3 Grounded answer + 
       <div class="learn-section">
         <h2>Where graphs win</h2>
         <p>Multi-hop questions — "which technologies are shared by projects Akshay works on?" — are where similarity search fails and graph traversal wins. That delta is the entire lesson of this build.</p>
+      </div>
+      <div class="learn-section">
+        <h2>Common pitfalls</h2>
+        <ul class="pitfall-list">
+          <li><strong>No schema</strong> — free-form extraction produces 40 ad-hoc relation types and an unqueryable graph. Fix the types before the first document.</li>
+          <li><strong>CREATE instead of MERGE</strong> — every re-ingestion duplicates the graph; entities never connect across documents. MERGE is non-negotiable.</li>
+          <li><strong>Skipping canonicalization</strong> — "AK", "Akshay", and "akshay v" become three disconnected people. Alias resolution is the real work of KG building.</li>
+          <li><strong>Unguarded Cypher</strong> — a generated (or injected) DELETE wipes the graph. Enforce read-only before execution, not after.</li>
+          <li><strong>Answering beyond the results</strong> — if the query returns empty and the model still answers, you rebuilt hallucination with extra steps.</li>
+        </ul>
+      </div>
+      <div class="learn-section">
+        <h2>Production checklist</h2>
+        <ul class="checklist">
+          <li>Schema written before extraction; 50+ nodes across ≥4 types</li>
+          <li>Re-ingestion is idempotent (MERGE + canonical names)</li>
+          <li>Cypher guardrail blocks writes; errors retried once with feedback</li>
+          <li>Answers name the path used; empty results → honest refusal</li>
+          <li>Head-to-head vs vector RAG documented — graph wins ≥2 multi-hop cases</li>
+        </ul>
+      </div>
+      <div class="learn-section">
+        <h2>Key terms</h2>
+        <table class="keyterms-table">
+          <tr><th>Term</th><th>Meaning</th></tr>
+          <tr><td>Triple</td><td>(subject, relation, object) — the atomic unit of a knowledge graph.</td></tr>
+          <tr><td>Cypher</td><td>Neo4j's query language; MATCH patterns traverse the graph.</td></tr>
+          <tr><td>MERGE</td><td>Create-if-missing — the idempotent load operation that dedupes entities.</td></tr>
+          <tr><td>Multi-hop</td><td>A question answered by chaining 2+ relationships — the graph's home turf.</td></tr>
+          <tr><td>GraphRAG</td><td>Hybrid: vector search finds entry nodes, graph traversal expands the neighborhood.</td></tr>
+        </table>
       </div>`,
     lab: {
         title: 'Build a knowledge-graph AI',
