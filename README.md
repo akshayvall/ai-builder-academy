@@ -1,5 +1,13 @@
 # 🛠️ AI Builder Academy
 
+> **📌 Frozen showcase.** This site is a portfolio snapshot of the seven builds and is no
+> longer independently maintained. The living, maintained version — same content plus the
+> full curriculum around it — is the **Builder Track (Level 400)** in
+> [AI Mastery Academy](https://akshayvall.github.io/ai-mastery-academy/)
+> ([repo](https://github.com/akshayvall/ai-mastery-academy)). Content source of truth:
+> `AI_Engineer_Builds/site/js/modules.js`, exported via `tools/export-academy.js`.
+
+
 An interactive, self-paced site for seven portfolio-grade AI engineering builds — MCP
 assistants, multi-agent orchestration, eval pipelines, RAG security guardrails, audit
 logs, fine-tuning, and knowledge graphs.
